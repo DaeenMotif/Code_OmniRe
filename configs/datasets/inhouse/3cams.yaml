@@ -1,0 +1,37 @@
+# In-house (motif/alchera) dataset configuration
+# Processed cameras (same ordering as PandaSet, so PandaPixelSource is reused):
+#   idx    camera              original size
+#    0    CAM_FRONT            (1920, 1536)
+#    1    CAM_FRONT_LEFT       (1920, 1536)
+#    2    CAM_FRONT_RIGHT      (1920, 1536)
+# Images come from perception_sensor_data_undist, rectified with the fisheye
+# balance=0 new camera matrix (f ~ 960 px, written to intrinsics/ by the
+# preprocess), so undistort stays False.
+data:
+  data_root: data/inhouse/processed # data root for the dataset
+  dataset: inhouse
+  scene_idx: 1 # which scene to use
+  start_timestep: 0 # which timestep to start from
+  end_timestep: -1 # which timestep to end at, -1 means the last timestep
+  preload_device: cuda
+  pixel_source: # image source and object annotations
+    type: datasets.pandaset.pandaset_sourceloader.PandaPixelSource
+    cameras: [0, 1, 2] # which cameras to use
+    downscale_when_loading: [2, 2, 2]
+    downscale: 1 # downscale factor wrt to the downscale_when_loading
+    undistort: False # already undistorted at preprocessing
+    test_image_stride: 0 # hold out every 10th timestep for evaluation
+    load_sky_mask: True
+    load_dynamic_mask: True
+    load_objects: True
+    load_smpl: False # no SMPL body model available (license-gated)
+    sampler: # error based image sampler
+      buffer_downscale: 8 # downscale factor for the buffer wrt load_size
+      buffer_ratio: 0.5 # the percentage of images sampled according to the error buffer
+      start_enhance_weight: 3 # give more chance to sample starting frames, which usually have more errors
+  lidar_source:
+    type: datasets.pandaset.pandaset_sourceloader.PandaLiDARSource
+    load_lidar: True # whether to load lidar
+    only_use_360_lidar: False
+    lidar_downsample_factor: 4 # downsample lidar by this factor to compute percentile
+    lidar_percentile: 0.02 # percentile to compute aabb from lidar
