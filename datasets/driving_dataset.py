@@ -512,10 +512,10 @@ class DrivingDataset(SceneDataset):
                     & (o_pts[:, 2] > -o_size[2] / 2)
                     & (o_pts[:, 2] < o_size[2] / 2)
                 )
-                inside_mask = inside_mask | mask
+                inside_mask = inside_mask | mask # update the inside_mask to include points that are inside any instance's bounding box across all frames
         
         # filter out the points that are inside the bounding boxes
-        seed_pts = seed_pts[~inside_mask]
+        seed_pts = seed_pts[~inside_mask] # keep only the points that are outside the bounding boxes
         if seed_colors is not None:
             seed_colors = seed_colors[~inside_mask]
         if seed_time is not None:

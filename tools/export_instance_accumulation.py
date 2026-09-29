@@ -126,11 +126,49 @@ def traj_length(pixel, ins_id):
     return float(torch.norm(trans[1:] - trans[:-1], dim=-1).sum())
 
 
-def list_all(dataset, max_pts, csv_path=None):
+def model_indices(dataset, per_frame, model_cfg):
+    """Map each instance to the index it gets inside its node model.
+
+    `RigidNodes.create_from_pcd` (models/nodes/rigid.py:95) enumerates the dict that
+    `get_init_objects` built, so an instance's `point_ids` value is its position in
+    first-appearance order (frame-major, then table index) *after* the moving filter
+    has removed the ones that never travel far enough or collect no points. That is a
+    third id space, distinct from both the json key and the dense-table index.
+    """
+    pixel = dataset.pixel_source
+    counts = {i: sum(p.shape[0] for p in per_frame[i]["pts"]) for i in per_frame}
+    out = {}
+    for name, mtype in (("RigidNodes", ModelType.RigidNodes),
+                        ("DeformableNodes", ModelType.DeformableNodes)):
+        if name not in model_cfg:
+            continue
+        if name == "DeformableNodes" and "SMPLNodes" in model_cfg:
+            continue  # exclude_smpl reshuffles that dict; not replayed here
+        init = model_cfg[name].get("init", {}) or {}
+        order, seen = [], set()
+        for fi in range(dataset.frame_num):
+            for i in range(dataset.instance_num):
+                if i in seen or not pixel.per_frame_instance_mask[fi, i]:
+                    continue
+                if int(pixel.instances_model_types[i]) != int(mtype):
+                    continue
+                seen.add(i)
+                order.append(i)
+        if init.get("only_moving", False):
+            thres = float(init.get("traj_length_thres", 0.0))
+            order = [i for i in order
+                     if counts.get(i, 0) > 0 and traj_length(pixel, i) > thres]
+        for k, i in enumerate(order):
+            out[i] = (name, k)
+    return out
+
+
+def list_all(dataset, max_pts, csv_path=None, per_frame=None):
     """How much LiDAR every annotated instance collects, and whether it saturates."""
     pixel = dataset.pixel_source
     ids = list(range(dataset.instance_num))
-    per_frame = harvest(dataset, ids)
+    if per_frame is None:
+        per_frame = harvest(dataset, ids)
     info = json.load(open(os.path.join(dataset.data_path, "instances", "instances_info.json")))
     rows = []
     for i in ids:
@@ -246,10 +284,14 @@ def main():
     scene_dir = os.path.join(args.out_dir, scene_tag)
     os.makedirs(scene_dir, exist_ok=True)
 
-    if args.list:
-        list_all(dataset, args.max_pts, os.path.join(scene_dir, "instance_harvest.csv"))
-        if not args.ids:
-            return
+    # harvesting every instance costs one pass over the frames and buys both the
+    # scene-wide accounting and the exact model-side index of each target
+    per_frame_all = harvest(dataset, list(range(dataset.instance_num)))
+    list_all(dataset, args.max_pts, os.path.join(scene_dir, "instance_harvest.csv"),
+             per_frame=per_frame_all)
+    model_idx = model_indices(dataset, per_frame_all, cfg.get("model", {}))
+    if not args.ids:
+        return
 
     targets = {}
     for key in args.ids:
@@ -261,7 +303,7 @@ def main():
     info_path = os.path.join(dataset.data_path, "instances", "instances_info.json")
     instances_info = json.load(open(info_path))
 
-    per_frame = harvest(dataset, list(targets.keys()))
+    per_frame = per_frame_all
     payload = {
         "scene": scene_tag,
         "start_timestep": int(dataset.start_timestep),
@@ -323,9 +365,27 @@ def main():
                         os.path.join(mode_dir, f"frame_{fi + dataset.start_timestep:03d}.ply"),
                     )
 
+        # annotated span. "gap" is ambiguous, so report both readings: how many
+        # frames inside the span carry no annotation, and how many contiguous holes
+        # those form (frames 33 and 34 missing = 2 missing frames, 1 hole)
+        vis_idx = np.flatnonzero(visible)
+        first_f = int(vis_idx[0]) + int(dataset.start_timestep)
+        last_f = int(vis_idx[-1]) + int(dataset.start_timestep)
+        missing = [int(f) + int(dataset.start_timestep)
+                   for f in range(vis_idx[0], vis_idx[-1] + 1) if not visible[f]]
+        holes = int(np.count_nonzero(np.diff(vis_idx) > 1))
+        mi = model_idx.get(ins_id)
+
         stats = {
             "id_in_dataset": key,
             "id_in_tables": ins_id,
+            "id_in_model": None if mi is None else mi[1],
+            "node_model": None if mi is None else mi[0],
+            "first_frame": first_f,
+            "last_frame": last_f,
+            "missing_frames": missing,
+            "num_missing_frames": len(missing),
+            "gap_runs": holes,
             "uuid": meta["id"],
             "class_name": meta["class_name"],
             "node_type": node_type,
@@ -343,9 +403,13 @@ def main():
         }
         json.dump(stats, open(os.path.join(ins_dir, "stats.json"), "w"), indent=2)
 
-        print(f"[ID={key}] {meta['class_name']:<8} {node_type:<14} "
-              f"visible {int(visible.sum()):>3} frames  total {pts.shape[0]:>6} pts  "
-              f"budget hit at {stats['budget_saturated_at_frame']}  traj {tlen:.2f} m")
+        print(f"[ID={key}] model_id {str(stats['id_in_model']):>4}  "
+              f"{meta['class_name']:<18} frames {first_f:>3}-{last_f:<3} "
+              f"({int(visible.sum())} fr, {len(missing)} missing in "
+              f"{holes} hole{'' if holes == 1 else 's'})  "
+              f"{pts.shape[0]:>6} pts  budget "
+              f"{'at ' + str(stats['budget_saturated_at_frame']) if stats['budget_saturated_at_frame'] is not None else 'never'}"
+              f"  traj {tlen:.1f} m")
 
         payload["instances"].append({
             **stats,

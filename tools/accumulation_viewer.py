@@ -25,6 +25,12 @@ def _pack(payload):
     for ins in payload["instances"]:
         out["instances"].append({
             "id": ins["id_in_dataset"],
+            "modelId": ins["id_in_model"],
+            "nodeModel": ins["node_model"],
+            "firstFrame": ins["first_frame"],
+            "lastFrame": ins["last_frame"],
+            "missing": ins["num_missing_frames"],
+            "holes": ins["gap_runs"],
             "uuid": ins["uuid"],
             "className": ins["class_name"],
             "nodeType": ins["node_type"],
@@ -129,6 +135,8 @@ TEMPLATE = r"""<!doctype html>
   <canvas id="gl"></canvas>
   <div id="hud">
     <dl>
+      <dt>model id</dt><dd id="hModel">-</dd>
+      <dt>annotated</dt><dd id="hSpan">-</dd>
       <dt>frame</dt><dd id="hFrame">-</dd>
       <dt>points shown</dt><dd id="hShown">-</dd>
       <dt>added this frame</dt><dd id="hAdded">-</dd>
@@ -375,6 +383,9 @@ const $=id=>document.getElementById(id);
 function fmt(n){return n.toLocaleString('en-US');}
 function hud(){
   const o=INS[S.ins], shown=shownCount(), added=o.perFrame[S.frame]||0;
+  $('hModel').textContent = o.modelId==null ? '-' : o.nodeModel+' #'+o.modelId;
+  $('hSpan').textContent = o.firstFrame+'-'+o.lastFrame+' ('+o.numVisibleFrames+' fr'+
+    (o.missing ? ', '+o.missing+' missing' : '')+')';
   $('hFrame').textContent = (S.frame+T0) + (o.vis[S.frame]?'':'  (absent)');
   $('hShown').textContent = fmt(shown);
   $('hAdded').textContent = S.capped && o.cum[S.frame]>DATA.maxPts
