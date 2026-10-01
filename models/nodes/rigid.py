@@ -427,7 +427,7 @@ class RigidNodes(VanillaGaussians):
             trans_cur_frame = self.instances_trans[self.cur_frame] # (num_instances, 3)
         trans_per_pts = trans_cur_frame[self.point_ids[..., 0]]
         
-        # transform the means to world space
+        # transform the means to world space; for an absent instance, instance is placed at the origin
         means = torch.bmm(
             rot_per_pts, means.unsqueeze(-1)
         ).squeeze(-1) + trans_per_pts
@@ -450,7 +450,6 @@ class RigidNodes(VanillaGaussians):
     def get_gaussians(self, cam: dataclass_camera) -> Dict[str, torch.Tensor]:
         # Every gaussian of every instance is handed to the rasterizer at every frame,
         # including instances absent at this frame (their canonical cloud then sits at the identity pose = world origin = ego position at start_timestep)
-        # They are neutralized by opacity, not by exclusion; see the valid_mask multiply below
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
         
@@ -474,8 +473,7 @@ class RigidNodes(VanillaGaussians):
             
         # Gaussians of instances not present at this frame get opacity EXACTLY 0, so
         # they contribute nothing to rgb/depth/alpha
-        # their parameters (the mask multiply zeroes the opacity gradient too).
-        # CAVEAT: gsplat still PROJECTS them - radius is purely geometric (3-sigma of the projected covariance, opacity-independent)
+        # gsplat still PROJECTS them - radius is purely geometric (3-sigma of the projected covariance, opacity-independent)
         activated_opacities = self.get_opacity * valid_mask.float().unsqueeze(-1)
         activated_scales = self.get_scaling
         activated_rotations = self.quat_act(world_quats)
