@@ -262,7 +262,7 @@ class PandaPixelSource(ScenePixelSource):
         instances_size = torch.from_numpy(instances_size[self.start_timestep:self.end_timestep]).float()
         instances_true_id = torch.from_numpy(instances_true_id).long()
         instances_model_types = torch.from_numpy(instances_model_types).long()
-        per_frame_instance_mask = torch.from_numpy(per_frame_instance_mask[self.start_timestep:self.end_timestep]).bool()
+        per_frame_instance_mask = torch.from_numpy(per_frame_instance_mask[self.start_timestep:self.end_timestep]).bool() # LOADED TIME WINDOW
         
         # Keep an instance if it is annotated in at least one frame;
         # drop it entirely if in none. Kept instances keep their zero padding rows.
@@ -273,11 +273,8 @@ class PandaPixelSource(ScenePixelSource):
         instances_model_types = instances_model_types[ins_frame_cnt > 0]
         per_frame_instance_mask = per_frame_instance_mask[:, ins_frame_cnt > 0]
         
-        # assign to the class
-        # (num_frames, num_instances, 4, 4)
         self.instances_pose = instances_pose
         # (num_instances, 3) ONE fixed box size per instance = mean over its visible frames
-        # zero rows of absent frames add nothing to the numerator, and the denominator counts only visible frames, so the average is unbiased
         # A rigid node's box size must be constant: the gaussians live in that box
         self.instances_size = instances_size.sum(0) / per_frame_instance_mask.sum(0).unsqueeze(-1)
         # (num_frames, num_instances)

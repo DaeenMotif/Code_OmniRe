@@ -48,19 +48,15 @@ class RigidNodes(VanillaGaussians):
         super().__init__(**kwargs)
         
     @property
-    def num_instances(self):
-        return self.instances_fv.shape[1] # see self.create_from_pcd for how instances_fv is created
+    def num_instances(self): # instances_fv shape: (num_frames, num_instances)
+        return self.instances_fv.shape[1] # num_instances
     @property
     def num_frames(self):
         return self.instances_fv.shape[0] # each instance has a frame visibility vector of length num_frames where num_frames is the number of frames in the video sequence
     
     def get_pts_valid_mask(self):
         """
-        Per-Gaussian visibility at the current frame: a Gaussian is "alive" only
-        while its instance is annotated in this frame (frame-visibility table
-        instances_fv). Gathers (num_frames, num_instances) -> (N,) via point_ids.
-        get_gaussians() uses it to zero the opacity of Gaussians of absent cars,
-        so one shared Gaussian set can serve the whole clip.
+        looks up instances_fv[cur_frame] (instance frame visibility) for each Gaussian's instance and returns True/False if visible in this frame
         """
         return self.instances_fv[self.cur_frame][self.point_ids[..., 0]]
     
@@ -107,7 +103,7 @@ class RigidNodes(VanillaGaussians):
         init_colors = torch.cat(init_colors, dim=0).to(self.device) # (N, 3)
         instances_pose = torch.cat(instances_pose, dim=1).to(self.device) # (num_frame, num_instances, 4, 4)
         self.instances_size = torch.stack(instances_size).to(self.device) # (num_instances, 3)
-        self.instances_fv = torch.cat(instances_fv, dim=1).to(self.device) # (num_frame, num_instances)
+        self.instances_fv = torch.cat(instances_fv, dim=1).to(self.device) # (num_frame, num_instances): each frame, out of all instances, K instances are visible, and the rest are not
         self.point_ids = torch.cat(point_ids, dim=0).to(self.device) # (N, 1), gaussian -> node
         instances_quats = self.get_instances_quats(instances_pose)   # rotation part of o2w
         instances_trans = instances_pose[..., :3, 3]                 # translation part of o2w
@@ -452,18 +448,9 @@ class RigidNodes(VanillaGaussians):
         return quat_mult(global_quats_per_pts, _quats)
 
     def get_gaussians(self, cam: dataclass_camera) -> Dict[str, torch.Tensor]:
-        """
-        Per-frame output of this node type, consumed by MultiTrainer.collect_gaussians,
-        which concatenates Background + RigidNodes + DeformableNodes + SMPLNodes into
-        one gaussian set and rasterizes them jointly in a single gsplat call
-        (this joint rasterization is what makes the scene graph differentiable end
-        to end, paper Sec. "Rendering").
-        """
-        # NOTE: nothing is filtered out here - every gaussian of every instance is
-        # handed to the rasterizer at every frame, including instances absent at this
-        # frame (their canonical cloud then sits at the identity pose = world origin
-        # = ego position at start_timestep). They are neutralized by opacity, not by
-        # exclusion; see the valid_mask multiply below.
+        # Every gaussian of every instance is handed to the rasterizer at every frame,
+        # including instances absent at this frame (their canonical cloud then sits at the identity pose = world origin = ego position at start_timestep)
+        # They are neutralized by opacity, not by exclusion; see the valid_mask multiply below
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
         
@@ -483,21 +470,12 @@ class RigidNodes(VanillaGaussians):
         else:
             rgbs = torch.sigmoid(colors[:, 0, :])
         
-        valid_mask = self.get_pts_valid_mask()
+        valid_mask = self.get_pts_valid_mask() # bool mask of shape (N,) indicating which gaussians are valid for the current frame
             
         # Gaussians of instances not present at this frame get opacity EXACTLY 0, so
-        # they contribute nothing to rgb/depth/alpha and no gradient reaches any of
+        # they contribute nothing to rgb/depth/alpha
         # their parameters (the mask multiply zeroes the opacity gradient too).
-        # CAVEAT: gsplat still PROJECTS them - radius is purely geometric
-        # (3-sigma of the projected covariance, opacity-independent), and the only
-        # rasterizer-side rejections are near_plane 0.1 / far_plane and off-screen.
-        # So while sitting at the origin they can still report radii > 0, which in
-        # vanilla.after_train() counts as "visible": it bumps vis_counts and writes
-        # max_2Dsize. max_2Dsize feeds the screen-size cull (cull_screen_size 0.15,
-        # active until stop_screen_size_at 30000 = the whole run for RigidNodes),
-        # and that cull has no gradient condition -> an object's real gaussians can
-        # be culled for how big they looked at the origin in frames where the object
-        # does not exist. Requires the point to be within ~10*sigma of a camera.
+        # CAVEAT: gsplat still PROJECTS them - radius is purely geometric (3-sigma of the projected covariance, opacity-independent)
         activated_opacities = self.get_opacity * valid_mask.float().unsqueeze(-1)
         activated_scales = self.get_scaling
         activated_rotations = self.quat_act(world_quats)
