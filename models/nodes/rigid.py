@@ -56,7 +56,7 @@ class RigidNodes(VanillaGaussians):
     
     def get_pts_valid_mask(self):
         """
-        looks up instances_fv[cur_frame] (instance frame visibility) for each Gaussian's instance and returns True/False if visible in this frame
+        looks up instances_fv[cur_frame] visibility in current frame; for each Gaussian's instance and returns True/False if visible in this frame
         """
         return self.instances_fv[self.cur_frame][self.point_ids[..., 0]]
     
@@ -450,7 +450,7 @@ class RigidNodes(VanillaGaussians):
     def get_gaussians(self, cam: dataclass_camera) -> Dict[str, torch.Tensor]:
         # Every gaussian of every instance is handed to the rasterizer at every frame,
         # including instances absent at this frame (their canonical cloud then sits at the identity pose = world origin = ego position at start_timestep)
-        filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
+        filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool) # all 1s, so all gaussians are passed to the rasterizer
         self.filter_mask = filter_mask
         
         world_means = self.transform_means(self._means)
