@@ -216,10 +216,8 @@ class PandaPixelSource(ScenePixelSource):
             ...
         }
         """
-        # instances_info.json: per-instance -> only the frames it was annotated in
-        # frame_instances.json: per-frame -> which instances are present
-        # The two tables below are DENSE (all frames x all instances), so slots for
-        # "object not annotated at this frame" must be filled with something
+        # instances_info.json: per-instance -> only the frames it was annotated in ; frame_instances.json: per-frame -> which instances are present
+        # The two tables below are DENSE (all frames x all instances), so slots for object not annotated must be filled with something
         instances_info_path = os.path.join(self.data_path, "instances", "instances_info.json")
         frame_instances_path = os.path.join(self.data_path, "instances", "frame_instances.json")
         with open(instances_info_path, "r") as f:
@@ -230,10 +228,6 @@ class PandaPixelSource(ScenePixelSource):
         num_instances = len(instances_info)
         num_full_frames = len(frame_instances)
         # For a missing (frame, instance) ZERO 3x3 rotation block (not identity!) and translation (0,0,0)
-        # after the rebasing below it is the ego position at start_timestep. These slots are pure padding and are only ever read behind
-        # per_frame_instance_mask; RigidNodes.get_instances_quats() later replaces the
-        # zero rotation with identity (1,0,0,0) so matrix_to_quaternion is never fed
-        # a degenerate matrix, and get_pts_valid_mask() zeroes those gaussians' opacity
         instances_pose = np.zeros((num_full_frames, num_instances, 4, 4)) # instances pose for all frames is set to zero initally
         instances_size = np.zeros((num_full_frames, num_instances, 3)) # the size of the instance is set to zero initally
         instances_true_id = np.arange(num_instances)
@@ -254,13 +248,10 @@ class PandaPixelSource(ScenePixelSource):
                 # rebase from the dataset's global frame into the scene frame whose
                 # origin IS the ego pose at start_timestep -> world (0,0,0) = ego start
                 obj_to_world = np.linalg.inv(ego_to_world_start) @ obj_to_world
-                instances_pose[frame_idx, int(k)] = np.array(obj_to_world) # only in the frames where the instance is visible, the pose is set to the correct value, otherwise it is set to zero      
+                instances_pose[frame_idx, int(k)] = np.array(obj_to_world) # only in frames where instance is visible, pose is set to correct value, otherwise set to zero      
                 instances_size[frame_idx, int(k)] = np.array(box_size)
         
-        # get frame valid instances
-        # shape (num_frames, num_instances)
-        # THIS is the table that makes the zero padding harmless: 1 = annotated here
-        # It becomes RigidNodes.instances_fv and gates visibility at every later stage
+        # For each frame, mark every instance present in that frame with a 1 in the mask
         per_frame_instance_mask = np.zeros((num_full_frames, num_instances))
         for frame_idx, valid_instances in frame_instances.items():
             per_frame_instance_mask[int(frame_idx), valid_instances] = 1
@@ -276,7 +267,7 @@ class PandaPixelSource(ScenePixelSource):
         # Drop instances with ZERO annotated frames inside the window (they exist in
         # the json but not in this clip). Instances annotated in even one frame are
         # kept in full, padding rows included -> this is why the padding must exist.
-        ins_frame_cnt = per_frame_instance_mask.sum(dim=0)   # (K,) #frames each instance is visible
+        ins_frame_cnt = per_frame_instance_mask.sum(dim=0)   # (K,) # Summing over the frame axis gives one number per instance
         instances_pose = instances_pose[:, ins_frame_cnt > 0]
         instances_size = instances_size[:, ins_frame_cnt > 0]
         instances_true_id = instances_true_id[ins_frame_cnt > 0]
