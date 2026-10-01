@@ -264,10 +264,9 @@ class PandaPixelSource(ScenePixelSource):
         instances_model_types = torch.from_numpy(instances_model_types).long()
         per_frame_instance_mask = torch.from_numpy(per_frame_instance_mask[self.start_timestep:self.end_timestep]).bool()
         
-        # Drop instances with ZERO annotated frames inside the window (they exist in
-        # the json but not in this clip). Instances annotated in even one frame are
-        # kept in full, padding rows included -> this is why the padding must exist.
-        ins_frame_cnt = per_frame_instance_mask.sum(dim=0)   # (K,) # Summing over the frame axis gives one number per instance
+        # Keep an instance if it is annotated in at least one frame;
+        # drop it entirely if in none. Kept instances keep their zero padding rows.
+        ins_frame_cnt = per_frame_instance_mask.sum(dim=0)   # (K,) frames annotated, per instance
         instances_pose = instances_pose[:, ins_frame_cnt > 0]
         instances_size = instances_size[:, ins_frame_cnt > 0]
         instances_true_id = instances_true_id[ins_frame_cnt > 0]
