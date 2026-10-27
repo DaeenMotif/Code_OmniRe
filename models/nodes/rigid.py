@@ -451,6 +451,11 @@ class RigidNodes(VanillaGaussians):
         # Every gaussian of every instance is handed to the rasterizer at every frame,
         # including instances absent at this frame (their canonical cloud then sits at the identity pose = world origin = ego position at start_timestep)
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool) # all 1s, so all gaussians are passed to the rasterizer
+        # ----- TO MODIFY AND APPLY FIX TO BLURRY ACTOR -----#
+        # Comment out the above line
+        # valid_mask = self.get_pts_valid_mask()
+        # filter_mask = valid_mask
+        # Comment out the next line 477: valid_mask = self.get_pts_valid_mask() #
         self.filter_mask = filter_mask
         
         world_means = self.transform_means(self._means)
@@ -468,7 +473,7 @@ class RigidNodes(VanillaGaussians):
             rgbs = torch.clamp(rgbs + 0.5, 0.0, 1.0)
         else:
             rgbs = torch.sigmoid(colors[:, 0, :])
-        
+        # Comment out the next line 477: valid_mask = self.get_pts_valid_mask()  #
         valid_mask = self.get_pts_valid_mask() # bool mask of shape (N,) indicating which gaussians are valid for the current frame
             
         # Gaussians of instances not present at this frame get opacity EXACTLY 0, so
